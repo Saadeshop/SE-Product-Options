@@ -1,0 +1,24 @@
+<div class="se-product-options-container" data-product-id="{{ product.id }}">
+  <div class="se-options-content">
+    <script>
+      window.seProductOptions = {
+        shop: "{{ shop.permanent_domain }}",
+        product: {{ product | json }},
+        collections: [
+          {% for collection in product.collections %}
+            {{ collection | json }}{% unless forloop.last %},{% endunless %}
+          {% endfor %}
+        ],
+        template: "{{ template.name }}"
+      };
+    </script>
+  </div>
+</div>
+
+{% schema %}
+{
+  "name": "SE Product Options",
+  "target": "section",
+  "templates": ["product"]
+}
+{% endschema %}

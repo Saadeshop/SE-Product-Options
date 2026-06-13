@@ -1,0 +1,7 @@
+-- CreateTable
+CREATE TABLE IF NOT EXISTS "Setting" (
+    "shop" TEXT NOT NULL PRIMARY KEY,
+    "settings" TEXT NOT NULL DEFAULT '{}',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL
+);

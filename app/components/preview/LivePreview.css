@@ -1,0 +1,94 @@
+.se-preview-sticky-wrapper {
+    position: sticky;
+    top: 0;
+    height: calc(100vh - 65px);
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
+    background-color: #f0f0f0;
+    padding: 10px;
+}
+
+.se-preview-card {
+    min-height: calc(100vh - 200px);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    background-color: white;
+    padding: 12px;
+    border-radius: 8px;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+.se-preview-card.se-mobile {
+    width: 400px;
+}
+
+.se-preview-card.se-desktop {
+    width: 100%;
+}
+
+.se-preview-grid {
+    width: 100%;
+}
+
+.se-preview-image-container {
+    aspect-ratio: 1/1;
+    background-color: #f0f0f0;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #d1d3d5;
+}
+
+.se-mobile .se-preview-image-container {
+    margin-bottom: 20px;
+}
+
+.se-desktop .se-preview-image-container {
+    margin-bottom: 0;
+}
+
+.se-preview-info-stack {
+    width: 100%;
+}
+
+.se-group-wrapper-inner {
+    margin: 0 -8px;
+}
+
+/* Skeletons & Global Buttons */
+.se-skeleton-title {
+    height: 24px;
+    width: 40%;
+    background-color: #f1f2f4;
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.se-skeleton-line {
+    height: 12px;
+    width: 100%;
+    background-color: #f1f2f4;
+    border-radius: 2px;
+}
+
+.se-skeleton-line-short {
+    width: 80%;
+}
+
+.se-add-to-cart {
+    width: 100%;
+    padding: 12px 0;
+    background: white;
+    border: 1.5px solid black;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.se-add-to-cart:hover {
+    background: #f6f6f6;
+}

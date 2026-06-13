@@ -1,0 +1,1421 @@
+<script>
+  window.seProductOptions = {
+    shop: "{{ shop.permanent_domain }}",
+    product: {{ product | json }},
+    collections: [
+      {% for collection in product.collections %}
+        {{ collection | json }}{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    ],
+    template: "{{ template.name }}"
+  };
+
+  (function() {
+    function startInitialization() {
+      if (window.__seProductOptionsStarted) return;
+      if (!document.body) { setTimeout(startInitialization, 50); return; }
+      if (!window.seProductOptions || !window.seProductOptions.product) { setTimeout(startInitialization, 100); return; }
+      window.__seProductOptionsStarted = true;
+
+      initProductOptions();
+    }
+
+    async function initProductOptions() {
+      const findAndInject = () => {
+        if (document.querySelector('.se-option-set')) return true;
+        let root = document.querySelector('.se-product-options-container .se-options-content') ||
+                   document.querySelector('.se-product-options-container') ||
+                   document.getElementById('se-product-options-root');
+
+        const atcSelectors = ['button[name="add"]', 'button.product-form__submit', '.product-form__buttons', '.add-to-cart', '#AddToCart', '[data-add-to-cart]', '.btn--add-to-cart'];
+        let atcButton = null;
+        for (const selector of atcSelectors) {
+            atcButton = document.querySelector(selector);
+            if (atcButton && atcButton.offsetWidth > 0) { break; }
+        }
+
+        if (!atcButton) {
+          const form = document.querySelector('form[action^="/cart/add"]');
+          if (form) atcButton = form;
+        }
+
+        if (!root && atcButton) {
+          root = document.createElement('div');
+          root.id = 'se-product-options-root';
+          atcButton.parentNode.insertBefore(root, atcButton);
+        }
+
+        if (root) { fetchOptions(root); return true; }
+        return false;
+      };
+
+      if (!findAndInject()) {
+        const observer = new MutationObserver(() => { if (findAndInject()) observer.disconnect(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => {
+            if (!document.querySelector('.se-option-set')) {
+                const form = document.querySelector('form[action^="/cart/add"]');
+                if (form) {
+                    const root = document.createElement('div');
+                    root.id = 'se-product-options-root-fallback';
+                    form.prepend(root);
+                    fetchOptions(root);
+                }
+            }
+            observer.disconnect();
+        }, 5000);
+      }
+    }
+
+    function getActiveAddons() {
+      const addons = [];
+      const optionSets = window.__seOptionSets || [];
+      
+      optionSets.forEach(set => {
+        const groups = typeof set.groups === 'string' ? JSON.parse(set.groups || '[]') : (set.groups || []);
+        groups.forEach(group => {
+          group.elements.forEach(el => {
+            if (el.hidden) return;
+            
+            // 1. Element-level addons
+            let shouldAddElementAddon = true;
+            const input = document.getElementById('se-opt-' + el.id);
+
+            if (['text', 'phone', 'email', 'number', 'textarea', 'date', 'color-picker'].includes(el.type)) {
+              if (!input || !input.value || input.value.trim() === '') {
+                shouldAddElementAddon = false;
+              }
+            } else if (el.type === 'switch') {
+              if (!input || !input.checked) {
+                shouldAddElementAddon = false;
+              }
+            }
+
+            if (shouldAddElementAddon) {
+              if (el.addonProduct && el.addonProduct.id) {
+                  const numericId = el.addonProduct.id.toString().split('/').pop();
+                  const gid = el.addonProduct.id.toString().includes('gid://') ? el.addonProduct.id : 'gid://shopify/ProductVariant/' + numericId;
+                  const price = el.price || el.addonProduct.price || 0;
+                  addons.push({ id: numericId, gid: gid, price: price, quantity: 1, label: el.label || 'Add-on' });
+              } else if (el.price > 0 && !['select', 'radio', 'checkbox', 'checkbox-group', 'button', 'color-swatch', 'image-swatch'].includes(el.type)) {
+                  addons.push({ id: null, gid: null, price: el.price, quantity: 1, label: el.label || 'Price Increase' });
+              }
+            }
+
+            // 2. Option-level addons (Select, Radio, Checkbox, Button, Color/Image Swatches)
+            if (['select', 'radio', 'checkbox', 'checkbox-group', 'button', 'color-swatch', 'image-swatch'].includes(el.type)) {
+              const elId = 'se-opt-' + (el.id || '');
+              let selectedValues = [];
+
+              if (el.type === 'select') {
+                const select = document.getElementById(elId);
+                if (select) {
+                  selectedValues = Array.from(select.selectedOptions).map(o => o.value).filter(Boolean);
+                }
+              } else if (el.type === 'radio' || el.type === 'color-swatch' || el.type === 'image-swatch') {
+                const propertyName = el.name || el.label;
+                const checked = document.querySelector('input[name="properties[' + propertyName + ']"]:checked');
+                if (checked) selectedValues.push(checked.value);
+              } else if (el.type === 'checkbox' || el.type === 'checkbox-group') {
+                const checks = document.querySelectorAll('.se-check-' + elId + ':checked');
+                checks.forEach(c => selectedValues.push(c.value));
+              } else if (el.type === 'button') {
+                const hiddenInput = document.getElementById(elId + '-btn');
+                if (hiddenInput && hiddenInput.value) {
+                  selectedValues.push(hiddenInput.value);
+                }
+              }
+
+              selectedValues.forEach(val => {
+                const opt = (el.optionValues || []).find(o => o.value === val);
+                if (opt) {
+                  const price = parseFloat(opt.price) || 0;
+                  if (opt.addonProduct && opt.addonProduct.id) {
+                    const numericId = opt.addonProduct.id.toString().split('/').pop();
+                    const gid = opt.addonProduct.id.toString().includes('gid://') ? opt.addonProduct.id : 'gid://shopify/ProductVariant/' + numericId;
+                    addons.push({ id: numericId, gid: gid, price: price || opt.addonProduct.price || 0, quantity: 1, label: opt.value });
+                  } else if (price > 0) {
+                    addons.push({ id: null, gid: null, price: price, quantity: 1, label: opt.value });
+                  }
+                }
+              });
+            }
+          });
+        });
+      });
+      return addons;
+    }
+
+    function getWidgetProperties() {
+      const props = {};
+      const root = document.querySelector('.se-product-options-container') || document.getElementById('se-product-options-root');
+      if (!root) return props;
+
+      const inputs = root.querySelectorAll('[name^="properties["]');
+      inputs.forEach(input => {
+        const parent = input.closest('.se-option-element');
+        if (parent && parent.style.display === 'none') return;
+        
+        if ((input.type === 'radio' || input.type === 'checkbox') && !input.checked) return;
+        
+        // Skip empty inputs
+        if (!['radio', 'checkbox'].includes(input.type) && (!input.value || input.value.trim() === '')) return;
+        
+        const match = input.name.match(/properties\[(.*?)\]/);
+        if (match && match[1]) {
+          props[match[1]] = input.value;
+        }
+      });
+      return props;
+    }
+
+    function applyConditionalLogic(container) {
+      if (!container) return;
+      const allElements = container.querySelectorAll('.se-option-element');
+      if (allElements.length === 0) return;
+      const currentValues = {};
+
+      const getVariantId = () => {
+        return new URLSearchParams(window.location.search).get('variant') || 
+               document.querySelector('form[action^="/cart/add"] input[name="id"]')?.value;
+      };
+
+      const variantId = getVariantId();
+
+      // 1. Gather values
+      allElements.forEach(elWrapper => {
+        const config = elWrapper.__seConfig;
+        if (!config) return;
+        const inputs = Array.from(elWrapper.querySelectorAll('input, select, textarea'));
+        let val = undefined;
+        if (config.type === 'checkbox' || config.type === 'checkbox-group') {
+           val = inputs.filter(i => i.checked).map(i => i.value);
+        } else if (config.type === 'radio' || config.type === 'color-swatch' || config.type === 'image-swatch') {
+           const checked = inputs.find(i => i.checked);
+           val = checked ? checked.value : "";
+        } else if (config.type === 'button') {
+           const activeBtn = elWrapper.querySelector('.se-btn-option--active');
+           val = activeBtn ? activeBtn.dataset.value : "";
+        } else if (inputs.length > 0) {
+           val = inputs[0].value;
+        }
+        if (val !== undefined) {
+          currentValues[config.id.toString()] = val;
+        }
+      });
+
+      // 2. Evaluate
+      allElements.forEach(elWrapper => {
+        const el = elWrapper.__seConfig;
+        
+        if (!el || !el.logicEnabled || !el.conditions) {
+           return;
+        }
+
+        const validConditions = el.conditions.filter(cond => cond.field && cond.field.trim() !== "");
+        if (validConditions.length === 0) {
+          elWrapper.style.display = "";
+          return;
+        }
+
+        const logicType = el.logicType || "Show";
+        const logicOperator = el.logicOperator || "All";
+
+        const results = validConditions.map(cond => {
+          const fieldKey = cond.field.toString();
+          let currentVal = fieldKey === 'shopify_variant' ? variantId : currentValues[fieldKey];
+          
+          if (currentVal === undefined || currentVal === null) currentVal = "";
+          
+          const target = String(cond.value || "").toLowerCase();
+          const op = cond.operator;
+          const isArray = Array.isArray(currentVal);
+          const valStr = isArray ? currentVal.map(v => String(v).toLowerCase()) : String(currentVal).toLowerCase();
+
+          switch(op) {
+            case 'EQUALS': 
+              return isArray ? valStr.includes(target) : valStr == target;
+            case 'NOT_EQUALS': 
+              return isArray ? !valStr.includes(target) : valStr != target;
+            case 'GREATER_THAN': 
+              return Number(currentVal) > Number(target);
+            case 'LESS_THAN': 
+              return Number(currentVal) < Number(target);
+            case 'STARTS_WITH': 
+              return !isArray && valStr.startsWith(target);
+            case 'ENDS_WITH': 
+              return !isArray && valStr.endsWith(target);
+            case 'CONTAINS': 
+              return isArray ? valStr.includes(target) : valStr.includes(target);
+            case 'NOT_CONTAINS': 
+              return isArray ? !valStr.includes(target) : !valStr.includes(target);
+            default: return false;
+          }
+        });
+
+        let isMet = logicOperator === 'All' ? results.every(r => r) : results.some(r => r);
+        let shouldShow = logicType === 'Show' ? isMet : !isMet;
+        elWrapper.style.display = shouldShow ? "" : "none";
+      });
+    }
+
+    function applyGlobalSettings(settings) {
+      if (!settings) return;
+      const id = "se-storefront-settings-style";
+      let styleEl = document.getElementById(id);
+      if (!styleEl) {
+        styleEl = document.createElement("style");
+        styleEl.id = id;
+        document.head.appendChild(styleEl);
+      }
+      
+      const s = settings;
+      const c = s.colors || {};
+      const b = s.borders || {};
+      const t = s.typography || {};
+      const a = s.additional || {};
+      
+      // Load Google Fonts if they are set
+      const fontList = [];
+      if (t.labelText && t.labelText.font) fontList.push(t.labelText.font);
+      if (t.mainText && t.mainText.font) fontList.push(t.mainText.font);
+      if (fontList.length > 0) {
+        const fontId = "se-storefront-google-fonts";
+        let fontLink = document.getElementById(fontId);
+        if (!fontLink) {
+          fontLink = document.createElement("link");
+          fontLink.id = fontId;
+          fontLink.rel = "stylesheet";
+          document.head.appendChild(fontLink);
+        }
+        fontLink.href = 'https://fonts.googleapis.com/css2?family=' + Array.from(new Set(fontList)).map(f => f.replace(/ /g, '+')).join('&family=') + '&display=swap';
+      }
+
+      styleEl.innerHTML = `
+        #se-product-options-root,
+        .se-product-options-container {
+          font-family: '${t.mainText?.font || "Inter"}', sans-serif !important;
+          background-color: ${c.general?.appBackground || "#ffffff"} !important;
+        }
+        #se-product-options-root .se-option-element label,
+        #se-product-options-root .se-label-price,
+        #se-product-options-root .se-switch-label-text,
+        .se-product-options-container .se-option-element label,
+        .se-product-options-container .se-label-price,
+        .se-product-options-container .se-switch-label-text {
+          color: ${c.general?.labelText || "#000000"} !important;
+          font-size: ${t.labelText?.baseSize || 13}px !important;
+          font-family: '${t.labelText?.font || "Inter"}', sans-serif !important;
+        }
+        #se-product-options-root .se-option-element label .se-required,
+        .se-product-options-container .se-option-element label .se-required {
+          color: ${c.general?.requiredCharacter || "#ff0000"} !important;
+        }
+        #se-product-options-root .se-input,
+        .se-product-options-container .se-input {
+          color: ${c.singleInput?.inputText || "#000000"} !important;
+          background-color: ${c.singleInput?.inputBackground || "#ffffff"} !important;
+          border: ${b.input?.borderSize ?? 1}px solid ${c.singleInput?.inputBorder || "#121212"} !important;
+          border-radius: ${b.input?.borderRadius ?? 8}px !important;
+          font-size: ${t.mainText?.baseSize || 13}px !important;
+          font-family: '${t.mainText?.font || "Inter"}', sans-serif !important;
+        }
+        #se-product-options-root .se-input:focus,
+        .se-product-options-container .se-input:focus {
+          border-color: ${c.singleInput?.inputBorder || "#121212"} !important;
+          box-shadow: 0 0 0 1px ${c.singleInput?.inputBorder || "#121212"} !important;
+        }
+        #se-product-options-root .se-file-upload-box,
+        .se-product-options-container .se-file-upload-box {
+          border: ${b.input?.borderSize ?? 2}px dashed ${c.singleInput?.inputBorder || "#121212"} !important;
+          border-radius: ${b.input?.borderRadius ?? 8}px !important;
+        }
+        #se-product-options-root .se-color-picker-trigger,
+        #se-product-options-root .se-cp-hex-input,
+        .se-product-options-container .se-color-picker-trigger,
+        .se-product-options-container .se-cp-hex-input {
+          border: ${b.input?.borderSize ?? 1}px solid ${c.singleInput?.inputBorder || "#121212"} !important;
+          border-radius: ${b.input?.borderRadius ?? 8}px !important;
+        }
+        #se-product-options-root select.se-input,
+        .se-product-options-container select.se-input {
+          color: ${c.choiceList?.dropdownText || "#121212"} !important;
+          background-color: ${c.choiceList?.dropdownBackground || "#ffffff"} !important;
+          border: ${b.dropdown?.borderSize ?? 1}px solid ${c.choiceList?.dropdownBorder || "#121212"} !important;
+          border-radius: ${b.dropdown?.borderRadius ?? 8}px !important;
+          font-family: '${t.mainText?.font || "Inter"}', sans-serif !important;
+        }
+        #se-product-options-root select.se-input[multiple] option:checked,
+        .se-product-options-container select.se-input[multiple] option:checked {
+          background-color: ${c.choiceList?.dropdownBackground || "#ffffff"} !important;
+          color: ${c.choiceList?.dropdownText || "#121212"} !important;
+          box-shadow: 0 0 0 1px ${c.choiceList?.dropdownBorder || "#121212"} !important;
+        }
+        #se-product-options-root .se-slider,
+        .se-product-options-container .se-slider {
+          background-color: ${c.singleInput?.switchBackground || "#dddddd"} !important;
+          border-color: ${c.singleInput?.switchBackground || "#dddddd"} !important;
+          border-radius: 24px !important;
+        }
+        #se-product-options-root .se-switch input:checked + .se-slider,
+        .se-product-options-container .se-switch input:checked + .se-slider {
+          background-color: ${c.singleInput?.switchActiveBackground || "#121212"} !important;
+          border-color: ${c.singleInput?.switchActiveBackground || "#121212"} !important;
+        }
+        #se-product-options-root .se-radio-custom,
+        .se-product-options-container .se-radio-custom {
+          border-width: ${b.input?.borderSize ?? 1}px !important;
+          border-style: solid !important;
+          border-color: ${c.singleInput?.inputBorder || "#121212"} !important;
+        }
+        #se-product-options-root .se-radio-item:hover .se-radio-custom,
+        .se-product-options-container .se-radio-item:hover .se-radio-custom {
+          border-color: ${c.singleInput?.inputBorder || "#121212"} !important;
+        }
+        #se-product-options-root .se-radio-label,
+        #se-product-options-root .se-radio-option-row,
+        .se-product-options-container .se-radio-label,
+        .se-product-options-container .se-radio-option-row {
+          color: ${c.choiceList?.checkboxRadioText || "#000000"} !important;
+          font-size: ${t.mainText?.baseSize || 13}px !important;
+          font-family: '${t.mainText?.font || "Inter"}', sans-serif !important;
+        }
+        #se-product-options-root .se-radio-item input[type="radio"]:checked + .se-radio-custom-radio,
+        .se-product-options-container .se-radio-item input[type="radio"]:checked + .se-radio-custom-radio {
+          border-width: ${b.input?.borderSize ?? 1}px !important;
+          border-color: ${c.choiceList?.checkboxRadioActive || "#121212"} !important;
+          background-color: ${c.general?.appBackground || "#ffffff"} !important;
+        }
+        #se-product-options-root .se-radio-item input[type="radio"]:checked + .se-radio-custom-radio::after,
+        .se-product-options-container .se-radio-item input[type="radio"]:checked + .se-radio-custom-radio::after {
+          background-color: ${c.choiceList?.checkboxRadioActive || "#121212"} !important;
+        }
+        #se-product-options-root .se-radio-item input[type="checkbox"]:checked + .se-radio-custom-checkbox,
+        .se-product-options-container .se-radio-item input[type="checkbox"]:checked + .se-radio-custom-checkbox {
+          border-width: ${b.input?.borderSize ?? 1}px !important;
+          border-color: ${c.choiceList?.checkboxRadioActive || "#121212"} !important;
+          background-color: ${c.choiceList?.checkboxRadioActive || "#121212"} !important;
+        }
+        #se-product-options-root .se-btn-option,
+        .se-product-options-container .se-btn-option {
+          color: ${c.swatch?.buttonText || "#000000"} !important;
+          background: ${c.swatch?.buttonBackground || "#ffffff"} !important;
+          border-color: ${c.swatch?.swatchBorder || "#dddddd"} !important;
+          border-width: ${b.swatch?.borderSize ?? 1}px !important;
+          border-radius: ${b.swatch?.borderRadius ?? 6}px !important;
+          font-size: ${t.mainText?.baseSize || 13}px !important;
+          font-family: '${t.mainText?.font || "Inter"}', sans-serif !important;
+        }
+        #se-product-options-root .se-btn-option:hover,
+        .se-product-options-container .se-btn-option:hover {
+          color: ${c.swatch?.buttonTextHover || "#121212"} !important;
+          background: ${c.swatch?.buttonBackgroundHover || "#ffffff"} !important;
+          border-color: ${c.swatch?.swatchBorderHover || "#dddddd"} !important;
+        }
+        #se-product-options-root .se-btn-option--active,
+        .se-product-options-container .se-btn-option--active {
+          color: ${c.swatch?.buttonTextActive || "#ffffff"} !important;
+          background: ${c.swatch?.buttonBackgroundActive || "#121212"} !important;
+          border-color: ${c.swatch?.swatchBorderActive || "#121212"} !important;
+        }
+        #se-product-options-root .se-swatch,
+        #se-product-options-root .se-radio-item--swatch .se-swatch,
+        .se-product-options-container .se-swatch,
+        .se-product-options-container .se-radio-item--swatch .se-swatch {
+          border-color: ${c.swatch?.swatchBorder || "#dddddd"} !important;
+          border-width: ${b.swatch?.borderSize ?? 1}px !important;
+          border-radius: ${b.swatch?.borderRadius ?? 6}px !important;
+        }
+        #se-product-options-root .se-radio-item--swatch:hover .se-swatch,
+        .se-product-options-container .se-radio-item--swatch:hover .se-swatch {
+          border-color: ${c.swatch?.swatchBorderHover || "#aaa"} !important;
+        }
+        #se-product-options-root .se-radio-item--swatch input:checked ~ .se-radio-label .se-swatch,
+        .se-product-options-container .se-radio-item--swatch input:checked ~ .se-radio-label .se-swatch {
+          border-color: transparent !important;
+          outline: 2px solid ${c.swatch?.swatchBorderActive || "#121212"} !important;
+          outline-offset: 3px;
+        }
+        ${a.customCss || ""}
+      `;
+    }
+
+
+    async function fetchOptions(root) {
+      if (root.dataset.loading === "true") return;
+      root.dataset.loading = "true";
+      try {
+        const response = await fetch('/apps/se-product-options/api/options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop: window.seProductOptions.shop,
+            product: window.seProductOptions.product,
+            collections: window.seProductOptions.collections || []
+          })
+        });
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) return;
+        const data = await response.json();
+        if (data.settings) {
+          applyGlobalSettings(data.settings);
+        }
+        if (data.optionSets && data.optionSets.length > 0) {
+          window.__seOptionSets = data.optionSets;
+          renderOptionSets(root, data.optionSets);
+        }
+      } catch (error) { }
+      finally { delete root.dataset.loading; }
+    }
+
+    function renderOptionSets(container, optionSets) {
+      container.innerHTML = '';
+      const addonVariants = [];
+      optionSets.forEach(set => {
+        try {
+          const setElement = document.createElement('div');
+          setElement.className = 'se-option-set';
+          const groups = typeof set.groups === 'string' ? JSON.parse(set.groups || '[]') : (set.groups || []);
+          groups.forEach(group => {
+            if (group.hidden) return;
+            const groupElement = document.createElement('div');
+            groupElement.className = 'se-option-group';
+            group.elements.forEach(el => {
+              if (el.hidden) return;
+              try {
+                const elContainer = document.createElement('div');
+                const colWidth = el.columnWidth || '100%';
+                const colClass = 'se-col-' + colWidth.replace('%', '');
+                elContainer.className = ('se-option-element ' + (el.htmlClass || '') + ' ' + colClass).replace(/\s+/g, ' ').trim();
+                elContainer.__seConfig = el;
+                const elId = 'se-opt-' + (el.id || Math.random().toString(36).substr(2, 9));
+                {% comment %} console.log("[SE] Rendering element:", el.type, el.label); {% endcomment %}
+
+                if (el.addonProduct && el.addonProduct.id) {
+                    const numericId = el.addonProduct.id.toString().split('/').pop();
+                    const gid = el.addonProduct.id.toString().includes('gid://') ? el.addonProduct.id : 'gid://shopify/ProductVariant/' + numericId;
+                    const price = el.price || el.addonProduct.price || 0;
+                    addonVariants.push({ id: numericId, gid: gid, price: price, quantity: 1, label: el.label || 'Add-on' });
+                } else if (el.price > 0) {
+                    addonVariants.push({ id: null, gid: null, price: el.price, quantity: 1, label: el.label || 'Price Increase' });
+                }
+
+                let tooltipHtml = '';
+                if (el.helpText && el.helpTextPosition === 'tooltip') {
+                  tooltipHtml = '<span class="se-tooltip-container"><i class="se-tooltip-icon">i</i><span class="se-tooltip-text">' + el.helpText + '</span></span>';
+                }
+                const priceHtml = el.price > 0 ? ' <span class="se-label-price">(+ $' + parseFloat(el.price).toFixed(2) + ')</span>' : '<span id="' + elId + '-price-label" class="se-label-price"></span>';
+                const labelHtml = (el.hiddenLabel || el.type === 'heading' || el.type === 'divider' || el.type === 'spacing' || el.type === 'paragraph' || el.type === 'html') ? '' : '<label for="' + elId + '">' + el.label + priceHtml + (el.required ? ' <span class="se-required">*</span>' : '') + tooltipHtml + '</label>';
+                const helpTextHtml = el.helpText ? '<div class="se-help-text">' + el.helpText + '</div>' : '';
+                const charCounterHtml = (el.showCharacterCounter && el.maxCharacter) ? '<div id="' + elId + '-counter" class="se-char-counter">0 / ' + el.maxCharacter + '</div>' : '';
+                let html = el.helpTextPosition === 'above' ? helpTextHtml : '';
+                html += labelHtml;
+                const textTransformClass = el.textTransform ? 'se-text-' + el.textTransform : '';
+                const propertyName = el.name || el.label;
+
+                if (el.type === 'date') {
+                  const iconClass = el.dateFormat === 'time' ? 'clock' : 'calendar';
+                  const propertyName = el.name || el.label;
+                  
+                  html += '<div class="se-datetime-container">';
+                  if (el.dateMode === 'range') {
+                    html += `
+                      <div class="se-datetime-range">
+                        <div class="se-datetime-input-wrapper">
+                          <input id="${elId}-start" class="se-input se-datetime-input" type="text" name="properties[${propertyName} (Start)]" placeholder="${el.placeholderStart || ''}" ${el.required ? 'required' : ''} readonly>
+                          <span class="se-datetime-icon ${iconClass}"></span>
+                        </div>
+                        <span class="se-range-separator">to</span>
+                        <div class="se-datetime-input-wrapper">
+                          <input id="${elId}-end" class="se-input se-datetime-input" type="text" name="properties[${propertyName} (End)]" placeholder="${el.placeholderEnd || ''}" ${el.required ? 'required' : ''} readonly>
+                          <span class="se-datetime-icon ${iconClass}"></span>
+                        </div>
+                      </div>
+                    `;
+                  } else {
+                    html += `
+                      <div class="se-datetime-input-wrapper">
+                        <input id="${elId}" class="se-input se-datetime-input" type="text" name="properties[${propertyName}]" value="${el.defaultValue || ''}" placeholder="${el.placeholder || ''}" ${el.required ? 'required' : ''} readonly>
+                        <span class="se-datetime-icon ${iconClass}"></span>
+                      </div>
+                    `;
+                  }
+                  html += '</div>';
+                } else if (['text', 'phone', 'email', 'number', 'textarea'].includes(el.type)) {
+                  const maxLengthAttr = el.maxCharacter ? ' maxlength="' + el.maxCharacter + '"' : '';
+                  const propertyName = el.name || el.label;
+                  if (el.type === 'textarea') {
+                    html += '<textarea id="' + elId + '" class="' + ('se-input ' + textTransformClass).trim() + '" name="properties[' + propertyName + ']" rows="4" placeholder="' + (el.placeholder || '') + '" ' + (el.required ? 'required' : '') + maxLengthAttr + '>' + (el.defaultValue || '') + '</textarea>';
+                  } else {
+                    let inputType = el.type === 'phone' ? 'tel' : el.type;
+                    html += '<input id="' + elId + '" class="' + ('se-input ' + textTransformClass).trim() + '" type="' + inputType + '" name="properties[' + propertyName + ']" value="' + (el.defaultValue || '') + '" placeholder="' + (el.placeholder || '') + '" ' + (el.required ? 'required' : '') + maxLengthAttr + '>';
+                  }
+                  const showBottomHelp = (!el.helpTextPosition || el.helpTextPosition === 'below') && el.helpText;
+                  if (showBottomHelp || charCounterHtml) {
+                    html += '<div class="se-bottom-row">' + (showBottomHelp ? helpTextHtml : '') + charCounterHtml + '</div>';
+                  }
+                } else if (el.type === 'color-picker') {
+                  const propertyName = el.name || el.label;
+                  const defaultColor = el.defaultValue || '#000000';
+                  const PRESETS = ['#000000','#434343','#666666','#999999','#b7b7b7','#cccccc','#d9d9d9','#ffffff','#e06666','#f6b26b','#ffd966','#93c47d','#76a5af','#6fa8dc','#8e7cc3','#c27ba0','#cc0000','#e69138','#f1c232','#6aa84f','#45818e','#3d85c6','#674ea7','#a64d79','#990000','#b45f06','#bf9000','#38761d','#134f5c','#0b5394','#351c75','#741b47'];
+                  
+                  html += `
+                    <div class="se-color-picker-container" id="${elId}-container">
+                      <input type="hidden" id="${elId}" name="properties[${propertyName}]" value="${defaultColor}" ${el.required ? 'required' : ''}>
+                      <div class="se-color-picker-trigger" id="${elId}-trigger">
+                        <div class="se-color-picker-swatch"><div class="se-color-picker-swatch-inner" id="${elId}-swatch" style="background-color:${defaultColor}"></div></div>
+                        <span class="se-color-picker-hex-label" id="${elId}-hex">${defaultColor}</span>
+                        <svg class="se-color-picker-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                      </div>
+                      <div id="${elId}-overlay" class="se-cp-overlay" style="display:none"></div>
+                      <div class="se-color-picker-dropdown" id="${elId}-dropdown">
+                        <div class="se-cp-saturation" id="${elId}-sat" style="background-color:hsl(0,100%,50%)">
+                          <div class="se-cp-saturation-white"></div>
+                          <div class="se-cp-saturation-black"></div>
+                          <div class="se-cp-saturation-pointer" id="${elId}-sat-ptr"></div>
+                        </div>
+                        <div class="se-cp-hue-wrap" id="${elId}-hue">
+                          <div class="se-cp-hue-thumb" id="${elId}-hue-thumb"></div>
+                        </div>
+                        <div class="se-cp-presets">${PRESETS.map(c => '<div class="se-cp-preset" data-color="'+c+'" style="background-color:'+c+'"></div>').join('')}</div>
+                        <div class="se-cp-hex-row">
+                          <span>Hex</span>
+                          <input type="text" class="se-cp-hex-input" id="${elId}-hex-input" value="${defaultColor}" maxlength="7">
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                  
+                  const showBottomHelp = (!el.helpTextPosition || el.helpTextPosition === 'below') && el.helpText;
+                  if (showBottomHelp) {
+                    html += '<div class="se-bottom-row">' + helpTextHtml + '</div>';
+                  }
+                  
+                  setTimeout(() => {
+                    const container = document.getElementById(elId + '-container');
+                    if (!container || container.dataset.cpBound) return;
+                    container.dataset.cpBound = 'true';
+                    
+                    const trigger = document.getElementById(elId + '-trigger');
+                    const dropdown = document.getElementById(elId + '-dropdown');
+                    const overlay = document.getElementById(elId + '-overlay');
+                    const satEl = document.getElementById(elId + '-sat');
+                    const satPtr = document.getElementById(elId + '-sat-ptr');
+                    const hueBar = document.getElementById(elId + '-hue');
+                    const hueThumb = document.getElementById(elId + '-hue-thumb');
+                    const hexInput = document.getElementById(elId + '-hex-input');
+                    const hexLabel = document.getElementById(elId + '-hex');
+                    const swatchInner = document.getElementById(elId + '-swatch');
+                    const hiddenInput = document.getElementById(elId);
+                    
+                    let hue = 0, sat = 100, bri = 0;
+                    
+                    const parseHex = (hex) => {
+                      const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+                      const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max - min;
+                      let h = 0;
+                      if (d !== 0) { if (max === r) h = ((g-b)/d + (g<b?6:0))/6; else if (max === g) h = ((b-r)/d+2)/6; else h = ((r-g)/d+4)/6; }
+                      return { h: h*360, s: max === 0 ? 0 : (d/max)*100, v: max*100 };
+                    };
+                    
+                    const hsb = parseHex(defaultColor);
+                    hue = hsb.h; sat = hsb.s; bri = hsb.v;
+                    
+                    const hsbToHex = (h, s, v) => {
+                      s /= 100; v /= 100;
+                      const c = v*s, x = c*(1-Math.abs(((h/60)%2)-1)), m = v-c;
+                      let r=0,g=0,b=0;
+                      if(h<60){r=c;g=x;}else if(h<120){r=x;g=c;}else if(h<180){g=c;b=x;}else if(h<240){g=x;b=c;}else if(h<300){r=x;b=c;}else{r=c;b=x;}
+                      return '#'+[r+m,g+m,b+m].map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
+                    };
+                    
+                    const updateUI = () => {
+                      const hex = hsbToHex(hue, sat, bri);
+                      if (hiddenInput) hiddenInput.value = hex;
+                      if (swatchInner) swatchInner.style.backgroundColor = hex;
+                      if (hexLabel) hexLabel.textContent = hex;
+                      if (hexInput && document.activeElement !== hexInput) hexInput.value = hex;
+                      if (satEl) satEl.style.backgroundColor = 'hsl(' + hue + ', 100%, 50%)';
+                      if (satPtr) { satPtr.style.left = sat + '%'; satPtr.style.top = (100 - bri) + '%'; }
+                      if (hueThumb) hueThumb.style.left = (hue / 360 * 100) + '%';
+                      container.querySelectorAll('.se-cp-preset').forEach(function(p) { p.classList.toggle('se-cp-active', p.dataset.color === hex); });
+                    };
+                    
+                    // Toggle dropdown
+                    trigger.addEventListener('click', function() {
+                      const isOpen = dropdown.classList.contains('se-cp-visible');
+                      if (isOpen) { dropdown.classList.remove('se-cp-visible'); trigger.classList.remove('se-cp-open'); overlay.style.display = 'none'; }
+                      else { dropdown.classList.add('se-cp-visible'); trigger.classList.add('se-cp-open'); overlay.style.display = 'block'; }
+                    });
+                    overlay.addEventListener('click', function() {
+                      dropdown.classList.remove('se-cp-visible'); trigger.classList.remove('se-cp-open'); overlay.style.display = 'none';
+                    });
+                    
+                    // Saturation drag
+                    const onSatMove = (e) => {
+                      const rect = satEl.getBoundingClientRect();
+                      sat = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                      bri = Math.max(0, Math.min(100, (1 - (e.clientY - rect.top) / rect.height) * 100));
+                      updateUI();
+                    };
+                    satEl.addEventListener('mousedown', function(e) {
+                      onSatMove(e);
+                      const onMove = (ev) => onSatMove(ev);
+                      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                      document.addEventListener('mousemove', onMove);
+                      document.addEventListener('mouseup', onUp);
+                    });
+                    
+                    // Hue drag
+                    const onHueMove = (e) => {
+                      const rect = hueBar.getBoundingClientRect();
+                      hue = Math.max(0, Math.min(360, ((e.clientX - rect.left) / rect.width) * 360));
+                      updateUI();
+                    };
+                    hueBar.addEventListener('mousedown', function(e) {
+                      onHueMove(e);
+                      const onMove = (ev) => onHueMove(ev);
+                      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                      document.addEventListener('mousemove', onMove);
+                      document.addEventListener('mouseup', onUp);
+                    });
+                    
+                    // Hex input
+                    hexInput.addEventListener('input', function() {
+                      let val = hexInput.value.trim();
+                      if (!val.startsWith('#')) val = '#' + val;
+                      if (/^#[0-9a-fA-F]{6}$/.test(val)) {
+                        const parsed = parseHex(val);
+                        hue = parsed.h; sat = parsed.s; bri = parsed.v;
+                        updateUI();
+                      }
+                    });
+                    
+                    // Preset clicks
+                    container.querySelectorAll('.se-cp-preset').forEach(function(p) {
+                      p.addEventListener('click', function() {
+                        const parsed = parseHex(p.dataset.color);
+                        hue = parsed.h; sat = parsed.s; bri = parsed.v;
+                        updateUI();
+                      });
+                    });
+                    
+                    updateUI();
+                  }, 0);
+                } else if (el.type === 'switch') {
+                  const propertyName = el.name || el.label;
+                  const isChecked = el.selectedByDefault ? 'checked' : '';
+                  html += `
+                    <div class="se-switch-container">
+                      <label class="se-switch">
+                        <input type="checkbox" id="${elId}" name="properties[${propertyName}]" value="Yes" ${isChecked}>
+                        <span class="se-slider"></span>
+                      </label>
+                      <label for="${elId}" class="se-switch-label-text">${el.placeholder || ""}</label>
+                    </div>
+                  `;
+                  const showBottomHelp = (!el.helpTextPosition || el.helpTextPosition === 'below') && el.helpText;
+                  if (showBottomHelp) {
+                    html += '<div class="se-bottom-row" style="margin-top: 4px;">' + helpTextHtml + '</div>';
+                  }
+                } else if (el.type === 'font-picker') {
+                  const FONTS = [
+                    "Arial", "Helvetica", "Georgia", "Times New Roman", "Courier New", "Verdana", 
+                    "Trebuchet MS", "Impact", "Comic Sans MS", "Tahoma", "Garamond",
+                    "Inter", "Roboto", "Open Sans", "Montserrat", "Lato", "Poppins", 
+                    "Outfit", "DM Sans", "Ubuntu", "Cabin", "Raleway", "Nunito", "Rubik",
+                    "Quicksand", "Josefin Sans", "Playfair Display", "Lora", "Merriweather", 
+                    "Bebas Neue", "Syne", "Abril Fatface", "Comfortaa", "Righteous", 
+                    "Cinzel", "Oswald", "Pacifico", "Dancing Script", "Lobster", 
+                    "Great Vibes", "Caveat", "Satisfy", "Sacramento", "Cookie", 
+                    "Alex Brush", "Allura", "Pinyon Script", "Playball", "Parisienne", 
+                    "Shadows Into Light", "Amatic SC"
+                  ];
+                  
+                  if (!document.getElementById('google-fonts-font-picker')) {
+                    const link = document.createElement('link');
+                    link.id = 'google-fonts-font-picker';
+                    link.rel = 'stylesheet';
+                    link.href = 'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Alex+Brush&family=Allura&family=Amatic+SC:wght@400;700&family=Bebas+Neue&family=Cabin:wght@400;700&family=Caveat:wght@400;700&family=Cinzel:wght@400;700&family=Comfortaa:wght@400;700&family=Cookie&family=DM+Sans:wght@400;700&family=Dancing+Script:wght@400;700&family=Great+Vibes&family=Inter:wght@400;500;700&family=Josefin+Sans:wght@400;700&family=Lato:wght@400;700&family=Lobster&family=Lora:ital,wght@0,400;0,700;1,400&family=Merriweather:wght@400;700&family=Montserrat:wght@400;500;700&family=Nunito:wght@400;700&family=Open+Sans:wght@400;600;700&family=Oswald:wght@400;500;700&family=Outfit:wght@400;700&family=Pacifico&family=Parisienne&family=Pinyon+Script&family=Playball&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;500;700&family=Quicksand:wght@400;700&family=Raleway:wght@400;700&family=Righteous&family=Roboto:wght@400;500;700&family=Rubik:wght@400;700&family=Satisfy&family=Sacramento&family=Shadows+Into+Light&family=Syne:wght@400;700&family=Ubuntu:wght@400;700&display=swap';
+                    document.head.appendChild(link);
+                  }
+
+                  const defaultFont = el.defaultValue || 'Inter';
+                  
+                  // Hidden input to submit the selected font-family
+                  html += '<input type="hidden" id="' + elId + '" name="properties[' + propertyName + ']" value="' + defaultFont + '">';
+
+                  // Custom dropdown container
+                  html += '<div class="se-font-picker-dropdown-container" style="position: relative; width: 100%;">';
+                  
+                  // Selected trigger box
+                  html += '<div id="' + elId + '-trigger" class="' + ('se-input ' + textTransformClass).trim() + '" style="display: flex; align-items: center; justify-content: space-between; font-family: ' + defaultFont + '; cursor: pointer; user-select: none; height: 36px; box-sizing: border-box;">';
+                  html += '<span id="' + elId + '-selected-text">' + defaultFont + '</span>';
+                  html += '<svg style="width: 16px; height: 16px; fill: currentColor;" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>';
+                  html += '</div>';
+
+                  // Options overlay
+                  html += '<div id="' + elId + '-options" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1000; max-height: 220px; overflow-y: auto; background-color: white; border: 1px solid #e1e3e5; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05); padding: 4px 0; box-sizing: border-box;">';
+                  
+                  FONTS.forEach(font => {
+                    const isSelected = font === defaultFont;
+                    const bgStyle = isSelected ? 'background-color: #f1f2f4;' : '';
+                    html += '<div class="se-font-option" data-value="' + font + '" style="padding: 8px 12px; font-family: ' + font + '; font-size: 14px; cursor: pointer; color: #1a1a1a; transition: background 0.15s ease; text-align: left; ' + bgStyle + '">' + font + '</div>';
+                  });
+                  
+                  html += '</div>';
+                  html += '</div>';
+
+                  // Dynamic JS scripting to handle dropdown triggers
+                  setTimeout(() => {
+                    const trigger = document.getElementById(elId + '-trigger');
+                    const options = document.getElementById(elId + '-options');
+                    const hiddenInput = document.getElementById(elId);
+                    const selectedText = document.getElementById(elId + '-selected-text');
+                    
+                    if (trigger && options && hiddenInput && selectedText) {
+                      const toggleDropdown = (e) => {
+                        e.stopPropagation();
+                        const isOpen = options.style.display === 'block';
+                        options.style.display = isOpen ? 'none' : 'block';
+                      };
+                      
+                      trigger.addEventListener('click', toggleDropdown);
+                      
+                      const optionNodes = options.querySelectorAll('.se-font-option');
+                      optionNodes.forEach(node => {
+                        node.addEventListener('click', (e) => {
+                          e.stopPropagation();
+                          const val = node.getAttribute('data-value');
+                          
+                          // Update value and UI style
+                          hiddenInput.value = val;
+                          selectedText.textContent = val;
+                          trigger.style.fontFamily = val;
+                          
+                          // Update active styling
+                          optionNodes.forEach(o => o.style.backgroundColor = 'transparent');
+                          node.style.backgroundColor = '#f1f2f4';
+                          
+                          options.style.display = 'none';
+
+                          // Trigger change event manually for integrations
+                          const event = new Event('change', { bubbles: true });
+                          hiddenInput.dispatchEvent(event);
+                        });
+
+                        node.addEventListener('mouseenter', () => {
+                          if (hiddenInput.value !== node.getAttribute('data-value')) {
+                            node.style.backgroundColor = '#f6f6f7';
+                          }
+                        });
+
+                        node.addEventListener('mouseleave', () => {
+                          if (hiddenInput.value !== node.getAttribute('data-value')) {
+                            node.style.backgroundColor = 'transparent';
+                          }
+                        });
+                      });
+                      
+                      document.addEventListener('click', (e) => {
+                        if (!trigger.contains(e.target) && !options.contains(e.target)) {
+                          options.style.display = 'none';
+                        }
+                      });
+                    }
+                  }, 0);
+
+                  if (el.helpTextPosition === 'below' || !el.helpTextPosition) html += helpTextHtml;
+                } else if (el.type === 'select') {
+                  const multipleAttr = el.allowMultiple ? 'multiple' : '';
+                  // Use a non-standard name for the select if multiple, so we can handle the joining manually via a hidden input
+                  const selectName = el.allowMultiple ? '' : 'name="properties[' + propertyName + ']"';
+                  html += '<select id="' + elId + '" class="' + ('se-input ' + textTransformClass).trim() + '" ' + selectName + ' ' + (el.required ? 'required' : '') + ' ' + multipleAttr + '>';
+                  
+                  const hasDefault = (el.optionValues || []).some(o => o.isDefault);
+                  const placeholderText = el.placeholder || "-- Please select --";
+                  html += '<option value="" ' + (hasDefault ? '' : 'selected') + ' disabled>' + placeholderText + '</option>';
+
+                  (el.optionValues || []).forEach(opt => {
+                    const priceSuffix = opt.price > 0 ? ' (+ $' + parseFloat(opt.price).toFixed(2) + ')' : '';
+                    html += '<option value="' + opt.value + '" ' + (opt.isDefault ? 'selected' : '') + '>' + opt.value + priceSuffix + '</option>';
+                  });
+                  html += '</select>';
+
+                  if (el.allowMultiple) {
+                    // Hidden input to hold the comma-separated values
+                    html += '<input type="hidden" id="' + elId + '-hidden" name="properties[' + propertyName + ']" value="">';
+                  }
+
+                  setTimeout(() => {
+                    const select = document.getElementById(elId);
+                    const hidden = document.getElementById(elId + '-hidden');
+                    const priceLabel = document.getElementById(elId + '-price-label');
+
+                    if (select) {
+                      const updateAll = () => {
+                        const selectedOptions = Array.from(select.selectedOptions);
+                        
+                        // 1. Update Hidden Input (if multiple)
+                        if (hidden) {
+                          const selectedValues = selectedOptions.map(o => o.value).filter(Boolean);
+                          hidden.value = selectedValues.join(', ');
+                        }
+
+                        // 2. Update Label Price
+                        let totalExtra = 0;
+                        selectedOptions.forEach(optNode => {
+                          const val = optNode.value;
+                          if (!val) return;
+                          const opt = (el.optionValues || []).find(o => o.value === val);
+                          if (opt) totalExtra += parseFloat(opt.price) || 0;
+                        });
+
+                        if (priceLabel) {
+                          if (totalExtra > 0) {
+                            priceLabel.textContent = ' (+ $' + totalExtra.toFixed(2) + ')';
+                          } else {
+                            priceLabel.textContent = '';
+                          }
+                        }
+                      };
+
+                      select.addEventListener('change', updateAll);
+                      updateAll(); // Initial sync
+                    }
+                  }, 0);
+
+                  if (el.helpTextPosition === 'below' || !el.helpTextPosition) html += helpTextHtml;
+                } else if (el.type === 'button') {
+                  const btnId = elId + '-btn';
+                  const hasTooltip = el.swatchStyle === 'color' || el.swatchStyle === 'image';
+                  const directionClass = el.direction === 'vertical' ? ' se-btn-group--vertical' : '';
+                  html += '<input type="hidden" id="' + btnId + '" name="properties[' + propertyName + ']" value="">';
+                  html += '<div class="se-btn-group' + directionClass + '" id="' + elId + '-group">';
+                  (el.optionValues || []).forEach((opt, idx) => {
+                    const priceSuffix = opt.price > 0 ? ' (+ $' + parseFloat(opt.price).toFixed(2) + ')' : '';
+                    const isDefault = opt.isDefault ? 'se-btn-option--active' : '';
+
+                    let tooltipHtml = '';
+                    if (hasTooltip) {
+                      let previewStyle = '';
+                      if (el.swatchStyle === 'color') {
+                        if (opt.swatchMode === 'two') {
+                          previewStyle = 'background: linear-gradient(135deg, ' + (opt.swatchValue || '#000000') + ' 50%, ' + (opt.swatchValue2 || '#ffffff') + ' 50%);';
+                        } else {
+                          previewStyle = 'background: ' + (opt.swatchValue || '#000000') + ';';
+                        }
+                      } else if (el.swatchStyle === 'image' && opt.swatchImage) {
+                        previewStyle = 'background-image: url("' + opt.swatchImage + '"); background-size: cover; background-position: center;';
+                      }
+                      tooltipHtml = '<div class="se-btn-swatch-tooltip"><div class="se-btn-swatch-tooltip-title">' + opt.value + priceSuffix + '</div><div class="se-btn-swatch-tooltip-preview" style="' + previewStyle + '"></div></div>';
+                    }
+
+                    html += '<div class="se-btn-tooltip-wrapper">' + tooltipHtml + '<button type="button" class="se-btn-option ' + isDefault + '" data-value="' + opt.value + '" data-elid="' + btnId + '"><span>' + opt.value + priceSuffix + '</span></button></div>';
+                  });
+                  html += '</div>';
+
+                  setTimeout(() => {
+                    const group = document.getElementById(elId + '-group');
+                    const hidden = document.getElementById(btnId);
+                    if (!group || !hidden) return;
+                    const defaultBtn = group.querySelector('.se-btn-option--active');
+                    if (defaultBtn) hidden.value = defaultBtn.dataset.value || '';
+                    const notAllowDeselect = el.notAllowDeselect || false;
+                    group.querySelectorAll('.se-btn-option').forEach(btn => {
+                      btn.addEventListener('click', function() {
+                        const isAlreadyActive = this.classList.contains('se-btn-option--active');
+                        if (isAlreadyActive) {
+                          if (notAllowDeselect) {
+                            return;
+                          } else {
+                            this.classList.remove('se-btn-option--active');
+                            hidden.value = '';
+                            return;
+                          }
+                        }
+                        group.querySelectorAll('.se-btn-option').forEach(b => b.classList.remove('se-btn-option--active'));
+                        this.classList.add('se-btn-option--active');
+                        hidden.value = this.dataset.value || '';
+                      });
+                    });
+                  }, 0);
+
+                  if (el.helpTextPosition === 'below' || !el.helpTextPosition) html += helpTextHtml;
+                } else if (el.type === 'radio' || el.type === 'checkbox' || el.type === 'checkbox-group' || el.type === 'color-swatch' || el.type === 'image-swatch') {
+                  const isMultiple = el.type === 'checkbox' || el.type === 'checkbox-group';
+                  const inputType = isMultiple || el.type === 'checkbox' ? 'checkbox' : 'radio';
+                  
+                  if ((el.optionValues || []).length === 0) {
+                     console.warn("[SE] Element with no options:", el);
+                     html += '<div style="font-size: 11px; color: #999; padding: 4px;">(Empty options)</div>';
+                  }
+
+                  if (isMultiple) {
+                    html += '<input type="hidden" id="' + elId + '-hidden" name="properties[' + propertyName + ']" value="">';
+                  }
+
+                  const isSwatchMode = el.swatchStyle === 'color' || el.swatchStyle === 'image';
+                  html += '<div class="se-radio-group se-radio-' + (el.direction || 'vertical') + (isSwatchMode ? ' se-radio-group--swatch' : '') + '">';
+                  (el.optionValues || []).forEach((opt, idx) => {
+                    const optId = elId + '-' + idx;
+                    const isChecked = opt.isDefault ? 'checked' : '';
+                    const priceSuffix = opt.price > 0 ? ' (+ $' + parseFloat(opt.price).toFixed(2) + ')' : '';
+                    
+                    const inputName = isMultiple ? '' : 'name="properties[' + propertyName + ']"';
+                    
+                    html += '<label class="se-radio-item' + (isSwatchMode ? ' se-radio-item--swatch' : '') + '" for="' + optId + '">';
+                    html += '  <input type="' + inputType + '" id="' + optId + '" ' + inputName + ' class="se-check-' + elId + '" value="' + opt.value + '" ' + isChecked + ' ' + (el.required ? 'required' : '') + '>';
+                    if (!isSwatchMode) html += '  <span class="se-radio-custom se-radio-custom-' + inputType + '"></span>';
+                    html += '  <span class="se-radio-label">';
+                    if (opt.helpText && el.helpTextPosition === 'above') {
+                      html += '<span class="se-radio-option-help se-help-above">' + opt.helpText + '</span>';
+                    }
+                    html += '    <span class="se-radio-option-row">';
+                    
+                    let swatchHtml = '';
+                    if (el.swatchStyle === 'color') {
+                      if (opt.swatchMode === 'two') {
+                        swatchHtml = '<span class="se-swatch se-swatch-two" style="--se-swatch-c1: ' + (opt.swatchValue || '#000000') + '; --se-swatch-c2: ' + (opt.swatchValue2 || '#ffffff') + ';"></span>';
+                      } else {
+                        swatchHtml = '<span class="se-swatch se-swatch-one" style="--se-swatch-c1: ' + (opt.swatchValue || '#000000') + ';"></span>';
+                      }
+                    } else if (el.swatchStyle === 'image' && opt.swatchImage) {
+                      swatchHtml = '<span class="se-swatch se-swatch-image" style=\'--se-swatch-img: url("' + opt.swatchImage + '");\'></span>';
+                    }
+                    
+                    html += swatchHtml + '      <span>' + opt.value + priceSuffix + '</span>';
+                    if (opt.helpText && el.helpTextPosition === 'tooltip') {
+                      html += '<span class="se-tooltip-container"><i class="se-tooltip-icon">i</i><span class="se-tooltip-text">' + opt.helpText + '</span></span>';
+                    }
+                    html += '    </span>';
+                    if (opt.helpText && (!el.helpTextPosition || el.helpTextPosition === 'below')) {
+                      html += '<span class="se-radio-option-help se-help-below">' + opt.helpText + '</span>';
+                    }
+                    html += '  </span>';
+                    html += '</label>';
+                  });
+                  html += '</div>';
+
+                  setTimeout(() => {
+                    const inputs = document.querySelectorAll('.se-check-' + elId);
+                    const hidden = document.getElementById(elId + '-hidden');
+                    const priceLabel = document.getElementById(elId + '-price-label');
+
+                    const updateAll = (e) => {
+                      const checkedInputs = Array.from(inputs).filter(r => r.checked);
+                      
+                      // Max Selections Enforcement
+                      if (e && e.target && e.target.checked) {
+                        if (el.maxSelections && checkedInputs.length > el.maxSelections) {
+                          e.target.checked = false;
+                          return;
+                        }
+                      }
+
+                      let totalExtra = 0;
+                      let selectedValues = [];
+
+                      inputs.forEach(r => {
+                        if (r.checked) {
+                          const val = r.value;
+                          const opt = (el.optionValues || []).find(o => o.value === val);
+                          if (opt) totalExtra += parseFloat(opt.price) || 0;
+                          selectedValues.push(val);
+                        }
+                      });
+
+                      if (priceLabel) {
+                        priceLabel.textContent = totalExtra > 0 ? ' (+ $' + totalExtra.toFixed(2) + ')' : '';
+                      }
+
+                      if (hidden) {
+                        hidden.value = selectedValues.join(', ');
+                        const selectedCount = selectedValues.length;
+                        const min = el.minSelections || 1;
+                        hidden.dataset.valid = selectedCount >= min;
+                      }
+                    };
+
+                    inputs.forEach(r => r.addEventListener('change', updateAll));
+
+                    // Swatch deselect/not-deselect logic (closure-based tracking, identical to button behavior)
+                    if (el.type === 'color-swatch' || el.type === 'image-swatch') {
+                      let currentActiveValue = '';
+                      const activeInput = Array.from(inputs).find(r => r.checked);
+                      if (activeInput) {
+                        currentActiveValue = activeInput.value;
+                      }
+
+                      inputs.forEach(r => {
+                        r.addEventListener('click', function(e) {
+                          if (this.value === currentActiveValue) {
+                            if (el.notAllowDeselect) {
+                              this.checked = true;
+                            } else {
+                              this.checked = false;
+                              currentActiveValue = '';
+                              updateAll();
+                            }
+                          } else {
+                            currentActiveValue = this.value;
+                          }
+                        });
+                      });
+                    }
+
+                    updateAll();
+                  }, 0);
+
+                  if (isMultiple) {
+                    let constraintNote = '';
+                    if (el.minSelections && el.maxSelections) {
+                      constraintNote = 'Choose ' + el.minSelections + ' - ' + el.maxSelections + ' options';
+                    } else if (el.minSelections) {
+                      constraintNote = 'Choose minimum ' + el.minSelections + ' option' + (el.minSelections > 1 ? 's' : '');
+                    } else if (el.maxSelections) {
+                      constraintNote = 'Choose maximum ' + el.maxSelections + ' option' + (el.maxSelections > 1 ? 's' : '');
+                    }
+                    if (constraintNote) {
+                      html += '<div class="se-constraint-note">' + constraintNote + '</div>';
+                    }
+                  }
+
+                  if (el.helpTextPosition === 'below' || !el.helpTextPosition) html += helpTextHtml;
+                } else if (el.type === 'file') {
+                  const allowedAttr = el.allowedExtensions?.length > 0 ? ' accept="' + el.allowedExtensions.map(e => '.' + e).join(',') + '"' : '';
+                  html += `
+                    <div class="se-file-upload-container">
+                      <div class="se-file-upload-box">
+                        <svg class="se-file-upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                        </svg>
+                        <div class="se-file-upload-info">Upload file</div>
+                        ${el.allowedExtensions?.length > 0 ? '<div class="se-file-upload-hint">Accepted: ' + el.allowedExtensions.join(', ') + '</div>' : ''}
+                        <input id="${elId}" class="se-file-upload-input" type="file" name="properties[${propertyName}]" ${el.required ? 'required' : ''} ${allowedAttr}>
+                      </div>
+                      <div id="${elId}-filename" class="se-file-upload-name" style="display: none;"></div>
+                      ${(el.helpTextPosition === 'below' || !el.helpTextPosition) ? helpTextHtml : ''}
+                    </div>
+                  `;
+                  
+                  setTimeout(() => {
+                    const fileInput = document.getElementById(elId);
+                    const nameDiv = document.getElementById(elId + '-filename');
+                    if (fileInput && nameDiv) {
+                      fileInput.addEventListener('change', function() {
+                        if (this.files && this.files[0]) {
+                          nameDiv.textContent = this.files[0].name;
+                          nameDiv.style.display = 'flex';
+                        } else {
+                          nameDiv.style.display = 'none';
+                        }
+                      });
+                    }
+                  }, 0);
+                } else if (el.type === 'heading') {
+                  const tag = (el.headingStyle || 'H2').toLowerCase();
+                  const color = el.headingColor || '#1a1a1a';
+                  const content = el.content || el.label || 'Heading';
+                  html = '<' + tag + ' class="se-heading se-heading-' + tag + '" style="--se-heading-color: ' + color + ';">' + content + '</' + tag + '>';
+                } else if (el.type === 'divider') {
+                  const thickness = el.dividerThickness || 1;
+                  const style = el.dividerStyle || 'solid';
+                  const color = el.dividerColor || '#e1e3e5';
+                  html = '<div class="se-divider" style="--se-divider-style: ' + style + '; --se-divider-thickness: ' + thickness + 'px; --se-divider-color: ' + color + ';"></div>';
+                } else if (el.type === 'spacing') {
+                  const height = el.spacingHeight || 20;
+                  html = '<div class="se-spacing" style="height: ' + height + 'px;"></div>';
+                } else if (el.type === 'paragraph') {
+                  const content = el.content || '';
+                  html = '<div class="se-paragraph">' + content + '</div>';
+                } else if (el.type === 'html') {
+                  const content = el.htmlContent || '';
+                  html = '<div class="se-html">' + content + '</div>';
+                }
+
+                elContainer.innerHTML = html;
+                groupElement.appendChild(elContainer);
+
+                setTimeout(() => {
+                  const input = document.getElementById(elId);
+
+                  if (!input || input.dataset.validationBound) return;
+
+                  input.dataset.validationBound = 'true';
+
+                  // Multi-select toggle helper
+                  if (el.type === 'select' && el.allowMultiple) {
+                    input.addEventListener('mousedown', function(e) {
+                      e.preventDefault();
+                      const option = e.target;
+                      if (option.tagName === 'OPTION') {
+                        // If it's the placeholder (first option with empty value), don't allow toggling it
+                        if (option.value === "" && option.disabled) return;
+
+                        option.selected = !option.selected;
+
+                        // Automatically deselect the placeholder if another option is selected
+                        const firstOpt = this.options[0];
+                        if (firstOpt && firstOpt.value === "") {
+                          firstOpt.selected = false;
+                        }
+
+                        // Trigger change event manually
+                        const event = new Event('change', { bubbles: true });
+                        this.dispatchEvent(event);
+                      }
+                      return false;
+                    });
+                  }
+
+                  const restriction = String(el.allowedValue || '')
+                    .trim()
+                    .toLowerCase();
+
+                  const transform = String(el.textTransform || '')
+                    .trim()
+                    .toLowerCase();
+
+                  const applyValidation = function () {
+                    let value = this.value;
+
+                    // LETTERS ONLY
+                    if (
+                      restriction === 'letters' ||
+                      restriction === 'letter'
+                    ) {
+                      value = value.replace(/[^a-zA-Z ]/g, '');
+                    }
+
+                    // NUMBERS ONLY
+                    else if (
+                      restriction === 'numbers' ||
+                      restriction === 'number' ||
+                      restriction === 'numeric'
+                    ) {
+                      value = value.replace(/[^0-9]/g, '');
+                    }
+
+                    // ALPHANUMERIC ONLY
+                    else if (
+                      restriction === 'alphanumeric' ||
+                      restriction === 'alpha-numeric'
+                    ) {
+                      value = value.replace(/[^a-zA-Z0-9 ]/g, '');
+                    }
+
+                    // TEXT TRANSFORM
+                    if (transform === 'uppercase') {
+                      value = value.toUpperCase();
+                    }
+
+                    else if (transform === 'lowercase') {
+                      value = value.toLowerCase();
+                    }
+
+                    else if (transform === 'capitalize') {
+                      value = value.replace(/\b\w/g, c => c.toUpperCase());
+                    }
+
+                    if (this.value !== value) {
+                      this.value = value;
+                    }
+                  };
+
+                  input.addEventListener('input', applyValidation);
+                  input.addEventListener('keyup', applyValidation);
+                  input.addEventListener('change', applyValidation);
+
+                  applyValidation.call(input);
+
+                }, 0);
+
+                if (el.showCharacterCounter && el.maxCharacter) {
+                  setTimeout(() => {
+                    const input = document.getElementById(elId);
+                    const counter = document.getElementById(elId + '-counter');
+                    if (input && counter) {
+                      const update = () => { counter.textContent = input.value.length + ' / ' + el.maxCharacter; };
+                      input.addEventListener('input', update);
+                      update();
+                    }
+                  }, 0);
+                }
+              } catch (e) {}
+            });
+            setElement.appendChild(groupElement);
+          });
+          container.appendChild(setElement);
+        } catch (e) {}
+      });
+
+      container.addEventListener('input', () => applyConditionalLogic(container));
+      container.addEventListener('change', () => applyConditionalLogic(container));
+      applyConditionalLogic(container);
+
+      interceptAddToCart();
+      initFlatpickr();
+    }
+
+    function initFlatpickr() {
+        const inputs = document.querySelectorAll('.se-datetime-input');
+        if (inputs.length === 0) return;
+
+        if (!window.flatpickr) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css';
+            document.head.appendChild(link);
+
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/flatpickr';
+            script.onload = () => {
+                document.querySelectorAll('.se-datetime-input').forEach(input => setupFlatpickrInstance(input));
+            };
+            document.head.appendChild(script);
+        } else {
+            inputs.forEach(input => setupFlatpickrInstance(input));
+        }
+    }
+
+    function setupFlatpickrInstance(input) {
+        if (input._flatpickr) return;
+        
+        const elIdAttr = input.id.replace('-start', '').replace('-end', '');
+        // The elId in renderOptionSets is 'se-opt-' + el.id
+        const elementId = elIdAttr.replace('se-opt-', '');
+        
+        let elConfig = null;
+        if (window.__seOptionSets) {
+            window.__seOptionSets.forEach(set => {
+                const groups = typeof set.groups === 'string' ? JSON.parse(set.groups) : set.groups;
+                groups.forEach(group => {
+                    group.elements.forEach(el => {
+                        if (el.id.toString() === elementId) elConfig = el;
+                    });
+                });
+            });
+        }
+
+        if (!elConfig) {
+            console.warn("[SE] Could not find config for element:", elementId);
+            return;
+        }
+
+        const isTime = elConfig.dateFormat === 'time';
+        const isDateTime = elConfig.dateFormat === 'date_time';
+        const displayFormat = elConfig.dateDisplayFormat || 'Y-m-d';
+
+        let flatpickrFormat = displayFormat;
+        if (isTime) flatpickrFormat = 'h:i K';
+        else if (isDateTime) flatpickrFormat = displayFormat + ' h:i K';
+
+        if (typeof flatpickr !== 'function') {
+            console.error("[SE] Flatpickr function not found.");
+            return;
+        }
+
+        flatpickr(input, {
+            enableTime: isTime || isDateTime,
+            noCalendar: isTime,
+            dateFormat: flatpickrFormat,
+            time_24hr: false,
+            allowInput: true,
+            // Removing static: true to prevent cutting by parent containers
+            onReady: (selectedDates, dateStr, instance) => {
+                input.type = 'text';
+            }
+        });
+    }
+
+    function interceptAddToCart() {
+      if (window.__seAddonPatched) return;
+      window.__seAddonPatched = true;
+      const originalFetch = window.fetch;
+      window.fetch = function(...args) {
+        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+        const options = args[1] || {};
+        if (url.includes('/cart/add') && (options.method || 'POST').toUpperCase() === 'POST' && options.body) {
+          try {
+            const addonVariants = getActiveAddons();
+            const widgetProps = getWidgetProperties();
+            if (addonVariants.length > 0) {
+              const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
+              
+              if (options.body instanceof FormData) {
+                const formData = options.body;
+                // For FormData, we can't easily transform to items[] without knowing all fields.
+                // So we just keep the property injection for now, but ensure it's on the main item.
+                formData.append('properties[_addons]', addonJson);
+                for (const [key, val] of Object.entries(widgetProps)) {
+                  if (!formData.has('properties[' + key + ']')) {
+                    formData.append('properties[' + key + ']', val);
+                  }
+                }
+              } else if (typeof options.body === 'string') {
+                const bodyJson = JSON.parse(options.body);
+                const items = [];
+                
+                // 1. Prepare the main product(s)
+                const originalItems = bodyJson.items || (bodyJson.id ? [bodyJson] : []);
+                originalItems.forEach(item => {
+                  item.properties = Object.assign({}, item.properties || {}, { _addons: addonJson }, widgetProps);
+                  items.push(item);
+                });
+                
+                // 2. Add each addon as a separate line item
+                addonVariants.forEach(v => {
+                  if (v.gid) {
+                    const variantId = v.gid.split('/').pop();
+                    items.push({
+                      id: variantId,
+                      quantity: v.quantity || 1,
+                      properties: { _se_addon: 'true', _se_parent: originalItems[0]?.id || 'main' }
+                    });
+                  }
+                });
+                
+                if (items.length > 0) {
+                  const newBody = { items: items };
+                  options.body = JSON.stringify(newBody);
+                }
+              }
+            } else if (Object.keys(widgetProps).length > 0) {
+              // Handle case with properties but no addons
+              if (options.body instanceof FormData) {
+                for (const [key, val] of Object.entries(widgetProps)) {
+                  if (!options.body.has('properties[' + key + ']')) {
+                    options.body.append('properties[' + key + ']', val);
+                  }
+                }
+              } else if (typeof options.body === 'string') {
+                const bodyJson = JSON.parse(options.body);
+                if (bodyJson.id) {
+                  bodyJson.properties = Object.assign({}, bodyJson.properties || {}, widgetProps);
+                } else if (bodyJson.items) {
+                  bodyJson.items.forEach(i => i.properties = Object.assign({}, i.properties || {}, widgetProps));
+                }
+                options.body = JSON.stringify(bodyJson);
+              }
+            }
+          } catch (e) {
+            console.error("[SE] Cart intercept error:", e);
+          }
+        }
+        return originalFetch.apply(this, args);
+      };
+    }
+    startInitialization();
+  })();
+</script>
+
+{{ 'product-options.css' | asset_url | stylesheet_tag }}
+
+{% schema %}
+{
+  "name": "Product Options",
+  "target": "head",
+  "settings": []
+}
+{% endschema %}

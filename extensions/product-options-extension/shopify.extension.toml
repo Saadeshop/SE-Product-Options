@@ -1,0 +1,7 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "product-options-extension"
+handle = "product-options-extension"
+uid = "2d0355c8-9ca3-03d9-8e54-a25b39bb99cd78877893"
+type = "theme"
