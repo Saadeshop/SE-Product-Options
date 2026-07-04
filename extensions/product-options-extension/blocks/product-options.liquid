@@ -1357,23 +1357,11 @@
                 const bodyJson = JSON.parse(options.body);
                 const items = [];
                 
-                // 1. Prepare the main product(s)
+                // Prepare the main product(s) with _addons attribute so cart transform can expand them
                 const originalItems = bodyJson.items || (bodyJson.id ? [bodyJson] : []);
                 originalItems.forEach(item => {
                   item.properties = Object.assign({}, item.properties || {}, { _addons: addonJson }, widgetProps);
                   items.push(item);
-                });
-                
-                // 2. Add each addon as a separate line item
-                addonVariants.forEach(v => {
-                  if (v.gid) {
-                    const variantId = v.gid.split('/').pop();
-                    items.push({
-                      id: variantId,
-                      quantity: v.quantity || 1,
-                      properties: { _se_addon: 'true', _se_parent: originalItems[0]?.id || 'main' }
-                    });
-                  }
                 });
                 
                 if (items.length > 0) {
