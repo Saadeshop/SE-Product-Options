@@ -2,7 +2,7 @@
 
 client_id = "f97c5bebfd0ca3b8d6c7793888f09ef3"
 name = "SE Product Options"
-application_url = "https://example.com"
+application_url = "https://se-product-options-9e40peviz-saad-eshops-projects.vercel.app"
 embedded = true
 
 [build]
@@ -16,10 +16,10 @@ api_version = "2026-07"
 scopes = "read_files,read_themes,write_cart_transforms,write_files,write_products,write_publications"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://se-product-options-9e40peviz-saad-eshops-projects.vercel.app/api/auth" ]
 
 [app_proxy]
-url = "https://example.com"
+url = "https://se-product-options-9e40peviz-saad-eshops-projects.vercel.app"
 subpath = "se-product-options"
 prefix = "apps"
 
