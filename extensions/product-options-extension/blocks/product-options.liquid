@@ -1332,144 +1332,79 @@
     function interceptAddToCart() {
       if (window.__seAddonPatched) return;
       window.__seAddonPatched = true;
-
-      // Helper: inject _addons into FormData
-      function injectIntoFormData(formData) {
-        const addonVariants = getActiveAddons();
-        const widgetProps = getWidgetProperties();
-        if (addonVariants.length > 0) {
-          const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
-          formData.set('properties[_addons]', addonJson);
-        }
-        for (const [key, val] of Object.entries(widgetProps)) {
-          if (!formData.has('properties[' + key + ']')) {
-            formData.append('properties[' + key + ']', val);
-          }
-        }
-      }
-
-      // Helper: inject _addons into JSON body string
-      function injectIntoJsonBody(bodyStr) {
-        const addonVariants = getActiveAddons();
-        const widgetProps = getWidgetProperties();
-        const bodyJson = JSON.parse(bodyStr);
-        if (addonVariants.length > 0) {
-          const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
-          const originalItems = bodyJson.items || (bodyJson.id ? [bodyJson] : []);
-          const items = [];
-
-          // 1. Prepare main product(s)
-          originalItems.forEach(item => {
-            item.properties = Object.assign({}, item.properties || {}, { _addons: addonJson }, widgetProps);
-            items.push(item);
-          });
-
-          // 2. Add each addon as a separate line item
-          addonVariants.forEach(v => {
-            if (v.gid) {
-              const variantId = v.gid.split('/').pop();
-              items.push({
-                id: variantId,
-                quantity: v.quantity || 1,
-                properties: { _se_addon: 'true', _se_parent: originalItems[0]?.id || 'main' }
-              });
-            }
-          });
-
-          return JSON.stringify({ items: items });
-        } else if (Object.keys(widgetProps).length > 0) {
-          if (bodyJson.id) {
-            bodyJson.properties = Object.assign({}, bodyJson.properties || {}, widgetProps);
-          } else if (bodyJson.items) {
-            bodyJson.items.forEach(i => i.properties = Object.assign({}, i.properties || {}, widgetProps));
-          }
-          return JSON.stringify(bodyJson);
-        }
-        return bodyStr;
-      }
-
-      // 1. Intercept window.fetch
       const originalFetch = window.fetch;
       window.fetch = function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
         const options = args[1] || {};
         if (url.includes('/cart/add') && (options.method || 'POST').toUpperCase() === 'POST' && options.body) {
           try {
-            if (options.body instanceof FormData) {
-              injectIntoFormData(options.body);
-            } else if (typeof options.body === 'string') {
-              options.body = injectIntoJsonBody(options.body);
+            const addonVariants = getActiveAddons();
+            const widgetProps = getWidgetProperties();
+            if (addonVariants.length > 0) {
+              const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
+              
+              if (options.body instanceof FormData) {
+                const formData = options.body;
+                // For FormData, we can't easily transform to items[] without knowing all fields.
+                // So we just keep the property injection for now, but ensure it's on the main item.
+                formData.append('properties[_addons]', addonJson);
+                for (const [key, val] of Object.entries(widgetProps)) {
+                  if (!formData.has('properties[' + key + ']')) {
+                    formData.append('properties[' + key + ']', val);
+                  }
+                }
+              } else if (typeof options.body === 'string') {
+                const bodyJson = JSON.parse(options.body);
+                const items = [];
+                
+                // 1. Prepare the main product(s)
+                const originalItems = bodyJson.items || (bodyJson.id ? [bodyJson] : []);
+                originalItems.forEach(item => {
+                  item.properties = Object.assign({}, item.properties || {}, { _addons: addonJson }, widgetProps);
+                  items.push(item);
+                });
+                
+                // 2. Add each addon as a separate line item
+                addonVariants.forEach(v => {
+                  if (v.gid) {
+                    const variantId = v.gid.split('/').pop();
+                    items.push({
+                      id: variantId,
+                      quantity: v.quantity || 1,
+                      properties: { _se_addon: 'true', _se_parent: originalItems[0]?.id || 'main' }
+                    });
+                  }
+                });
+                
+                if (items.length > 0) {
+                  const newBody = { items: items };
+                  options.body = JSON.stringify(newBody);
+                }
+              }
+            } else if (Object.keys(widgetProps).length > 0) {
+              // Handle case with properties but no addons
+              if (options.body instanceof FormData) {
+                for (const [key, val] of Object.entries(widgetProps)) {
+                  if (!options.body.has('properties[' + key + ']')) {
+                    options.body.append('properties[' + key + ']', val);
+                  }
+                }
+              } else if (typeof options.body === 'string') {
+                const bodyJson = JSON.parse(options.body);
+                if (bodyJson.id) {
+                  bodyJson.properties = Object.assign({}, bodyJson.properties || {}, widgetProps);
+                } else if (bodyJson.items) {
+                  bodyJson.items.forEach(i => i.properties = Object.assign({}, i.properties || {}, widgetProps));
+                }
+                options.body = JSON.stringify(bodyJson);
+              }
             }
           } catch (e) {
-            console.error('[SE] Fetch intercept error:', e);
+            console.error("[SE] Cart intercept error:", e);
           }
         }
         return originalFetch.apply(this, args);
       };
-
-      // 2. Intercept XMLHttpRequest
-      const OriginalXHR = window.XMLHttpRequest;
-      function PatchedXHR() {
-        const xhr = new OriginalXHR();
-        const originalOpen = xhr.open.bind(xhr);
-        const originalSend = xhr.send.bind(xhr);
-        let _method = '', _url = '';
-        xhr.open = function(method, url, ...rest) {
-          _method = (method || '').toUpperCase();
-          _url = url || '';
-          return originalOpen(method, url, ...rest);
-        };
-        xhr.send = function(body) {
-          if (_url.includes('/cart/add') && _method === 'POST' && body) {
-            try {
-              if (body instanceof FormData) {
-                injectIntoFormData(body);
-              } else if (typeof body === 'string') {
-                body = injectIntoJsonBody(body);
-              }
-            } catch (e) {
-              console.error('[SE] XHR intercept error:', e);
-            }
-          }
-          return originalSend(body);
-        };
-        return xhr;
-      }
-      PatchedXHR.prototype = OriginalXHR.prototype;
-      window.XMLHttpRequest = PatchedXHR;
-
-      // 3. Intercept form submits (for themes that POST the form directly)
-      document.addEventListener('submit', function(e) {
-        const form = e.target;
-        if (!form || !form.action || !form.action.includes('/cart/add')) return;
-        try {
-          const addonVariants = getActiveAddons();
-          const widgetProps = getWidgetProperties();
-          if (addonVariants.length > 0) {
-            const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
-            let inp = form.querySelector('input[name="properties[_addons]"]');
-            if (!inp) {
-              inp = document.createElement('input');
-              inp.type = 'hidden';
-              inp.name = 'properties[_addons]';
-              form.appendChild(inp);
-            }
-            inp.value = addonJson;
-          }
-          for (const [key, val] of Object.entries(widgetProps)) {
-            const name = 'properties[' + key + ']';
-            if (!form.querySelector('input[name="' + name + '"]')) {
-              const inp = document.createElement('input');
-              inp.type = 'hidden';
-              inp.name = name;
-              inp.value = val;
-              form.appendChild(inp);
-            }
-          }
-        } catch (e) {
-          console.error('[SE] Form submit intercept error:', e);
-        }
-      }, true); // capture phase so we run before the form submits
     }
     startInitialization();
   })();
