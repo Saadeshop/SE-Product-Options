@@ -9,27 +9,26 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
@@ -39,10 +38,10 @@ model OptionSet {
   shop             String
   title            String
   status           String   @default("active")
-  groups           String   // JSON stringified groups and elements
+  groups           String // JSON stringified groups and elements
   selectionMode    String   @default("all")
-  selectedProducts String   // JSON stringified product IDs/objects
-  conditions       String   // JSON stringified conditions
+  selectedProducts String // JSON stringified product IDs/objects
+  conditions       String // JSON stringified conditions
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

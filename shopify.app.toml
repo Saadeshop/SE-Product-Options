@@ -2,7 +2,7 @@
 
 client_id = "f97c5bebfd0ca3b8d6c7793888f09ef3"
 name = "SE Product Options"
-application_url = "https://se-product-options.vercel.app"
+application_url = "https://example.com"
 embedded = true
 
 [build]
@@ -13,12 +13,14 @@ api_version = "2026-07"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,read_themes,write_publications,write_cart_transforms,write_files,read_files"
+scopes = "read_files,read_themes,write_cart_transforms,write_files,write_products,write_publications"
 
 [auth]
-redirect_urls = [ "https://se-product-options.vercel.app/auth/callback", "https://se-product-options.vercel.app/auth" ]
+redirect_urls = [ "https://example.com/api/auth" ]
 
 [app_proxy]
-url = "https://se-product-options.vercel.app/"
+url = "https://example.com"
 subpath = "se-product-options"
 prefix = "apps"
+
+

@@ -13,5 +13,4 @@ if (process.env.NODE_ENV !== "production") {
 
 const prisma = global.prismaGlobal ?? new PrismaClient();
 
-// Triggering fresh client reload
 export default prisma;

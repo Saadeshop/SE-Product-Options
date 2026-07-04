@@ -1,5 +1,11 @@
 import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+
+const adapter = new PrismaBetterSqlite3(
+  { url: "file:prisma/dev.sqlite" },
+  { timestampFormat: "unixepoch-ms" }
+);
+const prisma = new PrismaClient({ adapter });
 
 async function checkData() {
   const sets = await prisma.optionSet.findMany();
