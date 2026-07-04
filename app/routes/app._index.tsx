@@ -38,6 +38,42 @@ export const loader = async ({ request }: any) => {
   } catch (e) { }
 
   try {
+     const transformRes = await admin.graphql(`
+       query {
+         cartTransforms(first: 10) {
+           nodes {
+             id
+             functionId
+           }
+         }
+       }
+     `);
+     const transformData = await transformRes.json();
+     const existingTransforms = transformData.data?.cartTransforms?.nodes || [];
+     
+     const functionId = process.env.SHOPIFY_CART_TRANSFORM_ID;
+     if (functionId && !existingTransforms.some((t: any) => t.functionId === functionId)) {
+        console.log("SE Product Options: Creating Cart Transform for function", functionId);
+        await admin.graphql(`
+          mutation cartTransformCreate($functionId: String!) {
+            cartTransformCreate(functionId: $functionId) {
+              cartTransform {
+                id
+                functionId
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `, { variables: { functionId } });
+     }
+  } catch(e) {
+    console.error("Cart transform check error", e);
+  }
+
+  try {
     const themeRes = await fetch(`https://${session.shop}/admin/api/2024-01/themes.json`, {
       headers: { "X-Shopify-Access-Token": session.accessToken as string }
     });
