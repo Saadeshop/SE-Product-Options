@@ -1356,13 +1356,27 @@
         if (addonVariants.length > 0) {
           const addonJson = JSON.stringify(addonVariants.map(v => ({ gid: v.gid, price: v.price })));
           const originalItems = bodyJson.items || (bodyJson.id ? [bodyJson] : []);
+          const items = [];
+
+          // 1. Prepare main product(s)
           originalItems.forEach(item => {
             item.properties = Object.assign({}, item.properties || {}, { _addons: addonJson }, widgetProps);
+            items.push(item);
           });
-          if (!bodyJson.items && bodyJson.id) {
-            return JSON.stringify(originalItems[0]);
-          }
-          return JSON.stringify({ items: originalItems });
+
+          // 2. Add each addon as a separate line item
+          addonVariants.forEach(v => {
+            if (v.gid) {
+              const variantId = v.gid.split('/').pop();
+              items.push({
+                id: variantId,
+                quantity: v.quantity || 1,
+                properties: { _se_addon: 'true', _se_parent: originalItems[0]?.id || 'main' }
+              });
+            }
+          });
+
+          return JSON.stringify({ items: items });
         } else if (Object.keys(widgetProps).length > 0) {
           if (bodyJson.id) {
             bodyJson.properties = Object.assign({}, bodyJson.properties || {}, widgetProps);
